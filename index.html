@@ -1,28 +1,580 @@
 <!DOCTYPE html>
-<html leng="en">
-  <head>
-    <meta charset="UTF-8">
-    <title>Hello World!</title>
-    <meta name="viewport" content="width=device-width,initial-scale=1">
-    <link rel="stylesheet" href="bluestyle.css" />
-  </head>
-  <body>
-    <h1>Hello world!</h1>
-    <div>
-      <img
-        src="img_hello_world.png"
-        alt="Hello World from Space"
-        style="width: 100%; max-width: 640px"
-      />
-    </div>
-    <p>This is the first file in my new Git Repo.</p>
-    <p>this line is here to show how merging works.</p>
-    <div>
-      <img
-        src="img_hello_hit.png"
-        alt="Hello Git"
-        style="width: 100%; max-width: 640px"
-      />
-    </div>
-  </body>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Timer Leaderboard - Auto Sync to Google Sheets</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { 
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      margin: 0;
+      padding: 0;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  
+  <!-- React & ReactDOM -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  
+  <!-- Babel Standalone untuk JSX -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  
+  <script type="text/babel">
+    const { useState, useEffect, createElement: h } = React;
+    const { Clock, Trophy, Plus, Trash2, RefreshCw, Settings, CheckCircle, AlertCircle } = lucide;
+
+    function TimerLeaderboard() {
+      const [teams, setTeams] = useState([]);
+      const [teamName, setTeamName] = useState('');
+      const [minutes, setMinutes] = useState('');
+      const [seconds, setSeconds] = useState('');
+      const [errors, setErrors] = useState('0');
+      const [loading, setLoading] = useState(true);
+      const [syncing, setSyncing] = useState(false);
+      const [webAppUrl, setWebAppUrl] = useState('');
+      const [isConfigured, setIsConfigured] = useState(false);
+      const [lastSync, setLastSync] = useState(null);
+      const [showSetup, setShowSetup] = useState(false);
+
+      useEffect(() => {
+        loadConfig();
+        loadData();
+      }, []);
+
+      const loadConfig = () => {
+        try {
+          const config = localStorage.getItem('sheets-config');
+          if (config) {
+            const parsed = JSON.parse(config);
+            setWebAppUrl(parsed.webAppUrl || '');
+            setIsConfigured(!!parsed.webAppUrl);
+          }
+        } catch (error) {
+          console.log('Belum ada konfigurasi');
+        }
+      };
+
+      const saveConfig = () => {
+        if (!webAppUrl) {
+          alert('Mohon isi Web App URL!');
+          return;
+        }
+        try {
+          localStorage.setItem('sheets-config', JSON.stringify({ webAppUrl }));
+          setIsConfigured(true);
+          setShowSetup(false);
+          alert('✅ Konfigurasi berhasil! Sekarang data akan otomatis sync ke Google Sheets.');
+        } catch (error) {
+          alert('❌ Gagal menyimpan: ' + error.message);
+        }
+      };
+
+      const loadData = () => {
+        try {
+          const data = localStorage.getItem('timer-teams');
+          if (data) {
+            setTeams(JSON.parse(data));
+          }
+        } catch (error) {
+          console.log('Belum ada data');
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      const saveData = (newTeams) => {
+        try {
+          localStorage.setItem('timer-teams', JSON.stringify(newTeams));
+        } catch (error) {
+          console.error('Gagal menyimpan:', error);
+        }
+      };
+
+      const syncToSheets = async (dataToSync) => {
+        if (!isConfigured || !webAppUrl) {
+          console.log('Sync dilewati - belum dikonfigurasi');
+          return;
+        }
+
+        setSyncing(true);
+        try {
+          const payload = {
+            teams: dataToSync.map((team, index) => ({
+              rank: index + 1,
+              name: team.name,
+              originalTime: `${team.minutes}:${team.seconds.toString().padStart(2, '0')}`,
+              errors: team.errors,
+              penalty: team.penalty,
+              finalTime: formatTime(Math.floor(team.finalTime / 60), team.finalTime % 60),
+              finalSeconds: team.finalTime,
+              timestamp: team.timestamp
+            }))
+          };
+
+          await fetch(webAppUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+            mode: 'no-cors'
+          });
+
+          setLastSync(new Date().toLocaleString('id-ID'));
+        } catch (error) {
+          console.error('❌ Gagal sync:', error);
+        } finally {
+          setSyncing(false);
+        }
+      };
+
+      const addTeam = async () => {
+        if (!teamName.trim() || minutes === '' || seconds === '') {
+          alert('Mohon isi nama tim, menit, dan detik!');
+          return;
+        }
+
+        const numErrors = parseInt(errors) || 0;
+        const totalSeconds = parseInt(minutes) * 60 + parseInt(seconds);
+        const penalty = numErrors * 30;
+        const finalTime = totalSeconds + penalty;
+        
+        const newTeam = {
+          id: Date.now(),
+          name: teamName.trim(),
+          minutes: parseInt(minutes),
+          seconds: parseInt(seconds),
+          errors: numErrors,
+          penalty: penalty,
+          totalSeconds: totalSeconds,
+          finalTime: finalTime,
+          timestamp: new Date().toLocaleString('id-ID')
+        };
+
+        const updatedTeams = [...teams, newTeam].sort((a, b) => a.finalTime - b.finalTime);
+        setTeams(updatedTeams);
+        saveData(updatedTeams);
+
+        if (isConfigured) {
+          await syncToSheets(updatedTeams);
+        }
+
+        setTeamName('');
+        setMinutes('');
+        setSeconds('');
+        setErrors('0');
+      };
+
+      const deleteTeam = async (id) => {
+        const updatedTeams = teams.filter(team => team.id !== id);
+        setTeams(updatedTeams);
+        saveData(updatedTeams);
+        
+        if (isConfigured) {
+          await syncToSheets(updatedTeams);
+        }
+      };
+
+      const resetAll = async () => {
+        if (window.confirm('Hapus semua data? Tindakan ini tidak dapat dibatalkan.')) {
+          setTeams([]);
+          saveData([]);
+          
+          if (isConfigured) {
+            await syncToSheets([]);
+          }
+        }
+      };
+
+      const formatTime = (mins, secs) => {
+        return `${mins}:${secs.toString().padStart(2, '0')}`;
+      };
+
+      if (loading) {
+        return (
+          <div className="min-h-screen bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
+            <div className="text-white text-xl">Memuat data...</div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-blue-500 to-purple-600 p-4 pb-20">
+          <div className="max-w-5xl mx-auto">
+            {/* Header */}
+            <div className="bg-white rounded-t-3xl shadow-2xl p-6 mb-1">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <Trophy className="text-yellow-500" size={36} />
+                  <div>
+                    <h1 className="text-3xl font-bold text-gray-800">Timer Leaderboard</h1>
+                    <p className="text-sm text-gray-600">Auto-Sync ke Google Sheets ✨</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowSetup(!showSetup)}
+                  className={`p-3 rounded-lg transition-colors ${
+                    isConfigured 
+                      ? 'bg-green-100 text-green-600 hover:bg-green-200' 
+                      : 'bg-red-100 text-red-600 hover:bg-red-200 animate-pulse'
+                  }`}
+                >
+                  {isConfigured ? <CheckCircle size={24} /> : <Settings size={24} />}
+                </button>
+              </div>
+              
+              {isConfigured && (
+                <div className="mt-4 flex items-center justify-between bg-green-50 border border-green-200 rounded-lg p-3">
+                  <div className="flex items-center gap-2 text-sm text-green-700">
+                    <CheckCircle size={16} />
+                    <span>Terhubung ke Google Sheets</span>
+                    {lastSync && <span className="text-xs text-green-600">• {lastSync}</span>}
+                  </div>
+                  <button
+                    onClick={() => syncToSheets(teams)}
+                    disabled={syncing}
+                    className="bg-green-500 hover:bg-green-600 text-white px-3 py-1 rounded text-sm flex items-center gap-1 disabled:opacity-50"
+                  >
+                    <RefreshCw size={14} className={syncing ? 'animate-spin' : ''} />
+                    {syncing ? 'Syncing...' : 'Sync Manual'}
+                  </button>
+                </div>
+              )}
+
+              {!isConfigured && (
+                <div className="mt-4 bg-red-50 border border-red-200 rounded-lg p-3">
+                  <p className="text-sm text-red-700 font-semibold">⚠️ Belum terkonfigurasi!</p>
+                  <p className="text-xs text-red-600">Klik ikon Settings untuk setup Google Sheets</p>
+                </div>
+              )}
+            </div>
+
+            {/* Setup Panel */}
+            {showSetup && (
+              <div className="bg-white shadow-2xl p-6 mb-1 border-l-4 border-blue-500">
+                <h2 className="text-xl font-semibold text-gray-800 mb-4">Setup Google Sheets Auto-Sync</h2>
+                
+                <div className="bg-blue-50 border-l-4 border-blue-500 p-4 mb-4">
+                  <h3 className="font-semibold text-blue-900 mb-2">📋 Langkah Setup:</h3>
+                  <ol className="text-sm text-blue-800 space-y-2 list-decimal list-inside">
+                    <li>Buka Google Sheet Anda</li>
+                    <li>Klik <strong>Extensions → Apps Script</strong></li>
+                    <li>Hapus code default, paste script di bawah</li>
+                    <li>Klik <strong>Deploy → New deployment</strong></li>
+                    <li>Type: <strong>Web app</strong>, Execute as: <strong>Me</strong>, Access: <strong>Anyone</strong></li>
+                    <li>Copy <strong>Web App URL</strong>, paste di form bawah</li>
+                  </ol>
+                </div>
+
+                {/* Apps Script Code */}
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Google Apps Script (Copy ke Apps Script Editor):
+                  </label>
+                  <div className="bg-gray-900 text-green-400 p-4 rounded-lg font-mono text-xs overflow-x-auto max-h-64 overflow-y-auto">
+                    <pre>{`function doGet(e) {
+  return ContentService.createTextOutput(JSON.stringify({
+    status: 'ok',
+    message: 'Web App aktif!'
+  })).setMimeType(ContentService.MimeType.JSON);
+}
+
+function doPost(e) {
+  try {
+    Logger.log('Received POST request');
+    const data = JSON.parse(e.postData.contents);
+    const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+    
+    sheet.clear();
+    
+    const headers = ['Peringkat', 'Nama Tim', 'Waktu Asli', 'Kesalahan', 'Penalti (detik)', 'Waktu Final', 'Total Detik', 'Tanggal Input'];
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    sheet.getRange(1, 1, 1, headers.length).setFontWeight('bold').setBackground('#4285f4').setFontColor('white');
+    
+    if (data.teams && data.teams.length > 0) {
+      const rows = data.teams.map((team) => [
+        team.rank,
+        team.name,
+        team.originalTime,
+        team.errors,
+        team.penalty,
+        team.finalTime,
+        team.finalSeconds,
+        team.timestamp
+      ]);
+      sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
+      
+      if (rows.length > 0) {
+        sheet.getRange(2, 1, 1, headers.length).setBackground('#fff3cd');
+      }
+    }
+    
+    sheet.autoResizeColumns(1, headers.length);
+    
+    Logger.log('Success! Updated ' + data.teams.length + ' teams');
+    
+    return ContentService.createTextOutput(JSON.stringify({
+      success: true,
+      count: data.teams.length
+    })).setMimeType(ContentService.MimeType.JSON);
+    
+  } catch (error) {
+    Logger.log('Error: ' + error.toString());
+    return ContentService.createTextOutput(JSON.stringify({
+      success: false,
+      error: error.toString()
+    })).setMimeType(ContentService.MimeType.JSON);
+  }
+}`}</pre>
+                  </div>
+                </div>
+
+                {/* Web App URL Input */}
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Web App URL dari Google Apps Script:
+                  </label>
+                  <input
+                    type="text"
+                    value={webAppUrl}
+                    onChange={(e) => setWebAppUrl(e.target.value)}
+                    placeholder="https://script.google.com/macros/s/AKfycby.../exec"
+                    className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                  />
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={saveConfig}
+                    className="flex-1 bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg"
+                  >
+                    Simpan & Aktifkan Sync
+                  </button>
+                  <button
+                    onClick={() => setShowSetup(false)}
+                    className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-lg"
+                  >
+                    Tutup
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Form Input */}
+            <div className="bg-white shadow-2xl p-6 mb-1">
+              <h2 className="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                <Plus size={24} className="text-blue-500" />
+                Tambah Data Tim
+              </h2>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Nama Tim
+                  </label>
+                  <input
+                    type="text"
+                    value={teamName}
+                    onChange={(e) => setTeamName(e.target.value)}
+                    onKeyPress={(e) => e.key === 'Enter' && addTeam()}
+                    placeholder="Masukkan nama tim"
+                    className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div className="grid grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Menit
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={minutes}
+                      onChange={(e) => setMinutes(e.target.value)}
+                      placeholder="0"
+                      className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Detik
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="59"
+                      value={seconds}
+                      onChange={(e) => setSeconds(e.target.value)}
+                      placeholder="0"
+                      className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-1">
+                      <AlertCircle size={14} className="text-red-500" />
+                      Kesalahan
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={errors}
+                      onChange={(e) => setErrors(e.target.value)}
+                      placeholder="0"
+                      className="w-full px-4 py-3 border-2 border-red-200 rounded-lg focus:ring-2 focus:ring-red-500"
+                    />
+                  </div>
+                </div>
+
+                {parseInt(errors) > 0 && (
+                  <div className="bg-orange-50 border border-orange-200 rounded-lg p-3">
+                    <div className="flex items-center gap-2 text-sm text-orange-800">
+                      <AlertCircle size={16} />
+                      <span className="font-semibold">Penalti: +{parseInt(errors) * 30} detik</span>
+                      <span className="text-xs text-orange-600">({errors} kesalahan × 30 detik)</span>
+                    </div>
+                  </div>
+                )}
+
+                <button
+                  onClick={addTeam}
+                  disabled={syncing}
+                  className="w-full bg-blue-500 hover:bg-blue-600 text-white font-semibold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  <Plus size={20} />
+                  {syncing ? 'Menyimpan & Sinkronisasi...' : 'Tambah Tim & Sync'}
+                </button>
+              </div>
+            </div>
+
+            {/* Leaderboard */}
+            <div className="bg-white rounded-b-3xl shadow-2xl p-6">
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-xl font-semibold text-gray-800 flex items-center gap-2">
+                  <Clock size={24} className="text-blue-500" />
+                  Peringkat Tim ({teams.length})
+                </h2>
+                {teams.length > 0 && (
+                  <button
+                    onClick={resetAll}
+                    disabled={syncing}
+                    className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 text-sm disabled:opacity-50"
+                  >
+                    <Trash2 size={16} />
+                    Reset
+                  </button>
+                )}
+              </div>
+
+              {teams.length === 0 ? (
+                <div className="text-center py-12 text-gray-400">
+                  <Clock size={64} className="mx-auto mb-4 opacity-50" />
+                  <p className="text-lg">Belum ada data tim</p>
+                  <p className="text-sm">Tambahkan tim pertama Anda!</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b-2 border-gray-200">
+                        <th className="py-3 px-3 text-left font-semibold text-gray-700">Rank</th>
+                        <th className="py-3 px-4 text-left font-semibold text-gray-700">Nama Tim</th>
+                        <th className="py-3 px-3 text-center font-semibold text-gray-700">Waktu Asli</th>
+                        <th className="py-3 px-3 text-center font-semibold text-gray-700">Kesalahan</th>
+                        <th className="py-3 px-3 text-center font-semibold text-gray-700">Penalti</th>
+                        <th className="py-3 px-3 text-center font-semibold text-gray-700">Waktu Final</th>
+                        <th className="py-3 px-3 text-center font-semibold text-gray-700 text-xs">Tanggal</th>
+                        <th className="py-3 px-3 text-center font-semibold text-gray-700">Aksi</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {teams.map((team, index) => (
+                        <tr 
+                          key={team.id} 
+                          className={`border-b border-gray-100 hover:bg-gray-50 transition-colors ${
+                            index === 0 ? 'bg-yellow-50' : ''
+                          }`}
+                        >
+                          <td className="py-3 px-3">
+                            <div className="flex items-center gap-2">
+                              {index === 0 && <Trophy className="text-yellow-500" size={18} />}
+                              <span className={`font-bold ${index === 0 ? 'text-yellow-600 text-lg' : 'text-gray-600'}`}>
+                                #{index + 1}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="py-3 px-4">
+                            <span className={`${index === 0 ? 'font-bold text-gray-800' : 'text-gray-700'}`}>
+                              {team.name}
+                            </span>
+                          </td>
+                          <td className="py-3 px-3 text-center">
+                            <span className="font-mono text-gray-600 text-sm">
+                              {formatTime(team.minutes, team.seconds)}
+                            </span>
+                          </td>
+                          <td className="py-3 px-3 text-center">
+                            {team.errors > 0 ? (
+                              <span className="inline-flex items-center gap-1 bg-red-100 text-red-700 px-2 py-1 rounded-full text-xs font-semibold">
+                                <AlertCircle size={12} />
+                                {team.errors}
+                              </span>
+                            ) : (
+                              <span className="text-green-600 text-sm">-</span>
+                            )}
+                          </td>
+                          <td className="py-3 px-3 text-center">
+                            {team.penalty > 0 ? (
+                              <span className="text-orange-600 font-semibold text-sm">
+                                +{team.penalty}s
+                              </span>
+                            ) : (
+                              <span className="text-gray-400 text-sm">-</span>
+                            )}
+                          </td>
+                          <td className="py-3 px-3 text-center">
+                            <span className={`font-mono font-bold ${
+                              index === 0 ? 'text-yellow-600 text-xl' : 'text-blue-600 text-lg'
+                            }`}>
+                              {formatTime(Math.floor(team.finalTime / 60), team.finalTime % 60)}
+                            </span>
+                          </td>
+                          <td className="py-3 px-3 text-center text-xs text-gray-500">
+                            {team.timestamp.split(' ')[1]}
+                          </td>
+                          <td className="py-3 px-3 text-center">
+                            <button
+                              onClick={() => deleteTeam(team.id)}
+                              disabled={syncing}
+                              className="text-red-500 hover:text-red-700 hover:bg-red-50 p-2 rounded-lg transition-colors disabled:opacity-50"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="mt-4 text-center text-white text-sm space-y-1">
+              <p>✨ Data tersinkronisasi otomatis ke Google Sheets</p>
+              <p className="text-xs opacity-80">Setiap kesalahan menambah penalti +30 detik</p>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.render(<TimerLeaderboard />, document.getElementById('root'));
+  </script>
+</body>
 </html>
